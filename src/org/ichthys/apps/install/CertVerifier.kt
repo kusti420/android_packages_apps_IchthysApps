@@ -87,19 +87,39 @@ object CertVerifier {
      * Updates are only attempted over a pinned install (anything else would fail anyway).
      */
     fun installedMatches(context: Context, packageName: String, pins: Set<String>): Boolean? {
-        val info =
+        val signing =
             try {
-                context.packageManager.getPackageInfo(
-                    packageName,
-                    PackageManager.PackageInfoFlags.of(
-                        PackageManager.GET_SIGNING_CERTIFICATES.toLong()
-                    ),
-                )
+                installedSigningInfo(context, packageName)
             } catch (e: PackageManager.NameNotFoundException) {
                 return null
-            }
-        val signing = info.signingInfo ?: return false
+            } ?: return false
         return matches(currentSigners(signing), lineage(signing), pins)
+    }
+
+    /**
+     * The signing info of the installed [packageName], read from its base APK on disk and only
+     * as a fallback from PackageManager's view of the package. The two differ for microG: the
+     * platform reports Google's certificate for it to callers (signature spoofing, see
+     * vendor/microg), which is neither what the file is signed with nor what an update has to
+     * match, so the catalog pin never matched and the app was reported as tampered with.
+     */
+    @Throws(PackageManager.NameNotFoundException::class)
+    private fun installedSigningInfo(context: Context, packageName: String): SigningInfo? {
+        val pm = context.packageManager
+        val flags =
+            PackageManager.PackageInfoFlags.of(PackageManager.GET_SIGNING_CERTIFICATES.toLong())
+        val sourceDir =
+            pm.getApplicationInfo(packageName, PackageManager.ApplicationInfoFlags.of(0))
+                .sourceDir
+        val fromFile =
+            sourceDir?.let { path ->
+                try {
+                    pm.getPackageArchiveInfo(path, flags)?.signingInfo
+                } catch (e: RuntimeException) {
+                    null
+                }
+            }
+        return fromFile ?: pm.getPackageInfo(packageName, flags).signingInfo
     }
 
     /**
@@ -107,18 +127,13 @@ object CertVerifier {
      * current key after a rotation); null when it is not installed. What an adoption pins.
      */
     fun installedSigners(context: Context, packageName: String): Set<String>? {
-        val info =
+        val signing =
             try {
-                context.packageManager.getPackageInfo(
-                    packageName,
-                    PackageManager.PackageInfoFlags.of(
-                        PackageManager.GET_SIGNING_CERTIFICATES.toLong()
-                    ),
-                )
+                installedSigningInfo(context, packageName)
             } catch (e: PackageManager.NameNotFoundException) {
                 return null
             }
-        return info.signingInfo?.let { currentSigners(it).map(::sha256).toSet() } ?: emptySet()
+        return signing?.let { currentSigners(it).map(::sha256).toSet() } ?: emptySet()
     }
 
     fun sha256(sig: Signature): String =
