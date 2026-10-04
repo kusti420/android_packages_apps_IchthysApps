@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+     Copyright (C) 2026 IchthysOS
+
+     Licensed under the Apache License, Version 2.0 (the "License");
+     you may not use this file except in compliance with the License.
+     You may obtain a copy of the License at
+
+          http://www.apache.org/licenses/LICENSE-2.0
+
+     Unless required by applicable law or agreed to in writing, software
+     distributed under the License is distributed on an "AS IS" BASIS,
+     WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+     See the License for the specific language governing permissions and
+     limitations under the License.
+-->
+<resources>
+    <string name="app_name">Ichthys Apps</string>
+
+    <!-- Tabs -->
+    <string name="tab_recommended">Recommended</string>
+    <string name="tab_installed">Installed</string>
+
+    <!-- Recommended -->
+    <string name="recommended_title">Recommended apps</string>
+    <string name="recommended_summary">Downloaded from each developer\'s own source on this phone and checked against their signing key. None of these is in the ROM. The stores are for finding apps: what you install from them, Ichthys Apps can keep updated.</string>
+    <string name="recommended_install">Install</string>
+    <string name="recommended_install_count">Install %1$d</string>
+    <string name="recommended_apply">Apply</string>
+    <string name="recommended_none">Install none</string>
+    <string name="recommended_removes">Unchecked and installed: %1$s will be removed.</string>
+    <string name="recommended_empty">The catalog is empty or missing (/product/etc/ichthys/apps-catalog.json).</string>
+
+    <!-- Installed -->
+    <string name="installed_title">Installed</string>
+    <string name="installed_empty">Nothing yet. Pick apps under Recommended.</string>
+    <string name="installed_check_all">Check for updates</string>
+    <string name="installed_update_now">Update now</string>
+    <string name="installed_remove">Remove</string>
+    <string name="installed_remove_title">Remove %1$s?</string>
+    <string name="installed_remove_text">The app is uninstalled together with its data, and leaves apps.install.</string>
+    <string name="installed_version">Version</string>
+    <string name="installed_source">Source</string>
+    <string name="installed_last_check">Last check</string>
+    <string name="installed_never">never</string>
+    <string name="installed_not_installed">not installed</string>
+    <string name="installed_settings">Updates</string>
+    <string name="installed_auto_update">Update automatically</string>
+    <string name="installed_auto_update_summary">Daily, in the background, without asking (apps.autoUpdate)</string>
+    <string name="installed_wifi_only">Only on Wi-Fi</string>
+    <string name="installed_wifi_only_summary">Every background download waits for an unmetered network (apps.wifiOnly). Off: only those over 100 MB do.</string>
+    <string name="installed_stop_updating">Stop updating</string>
+    <string name="installed_adopted_tag">adopted</string>
+    <string name="installed_pin">Pinned key</string>
+    <string name="installed_pin_tofu">%1$s (trusted on first use)</string>
+    <string name="installed_system_title">System apps</string>
+    <string name="installed_system_summary">Part of the ROM. Updated from their developers over the built-in copies; they can\'t be removed here.</string>
+    <string name="installed_other_title">Other apps</string>
+    <string name="installed_other_summary">Installed from a store, a download or a computer. Ichthys Apps can take over their updates, so a store is only needed for finding apps.</string>
+    <string name="installed_other_from">from %1$s</string>
+    <string name="installed_keep_updated">Keep updated</string>
+
+    <!-- Keep updated (adopting an app installed from elsewhere) -->
+    <string name="adopt_title">Keep %1$s updated?</string>
+    <string name="adopt_looking">Looking it up on F-Droid</string>
+    <string name="adopt_found">Source: %1$s</string>
+    <string name="adopt_not_found">F-Droid doesn\'t have this app. Where do its updates come from?</string>
+    <string name="adopt_other_signer">F-Droid has this app, but signs it with another key than the copy installed here, so its builds can\'t update this one. Where do its updates come from?</string>
+    <string name="adopt_source_hint">GitHub or GitLab project, or https link to the APK</string>
+    <string name="adopt_use_apkpure">Use APKPure</string>
+    <string name="adopt_checking">Checking the source</string>
+    <string name="adopt_bad_source">Not a GitHub or GitLab project, an https link or a scheme:spec source.</string>
+    <string name="adopt_tofu">Trust on first use: no key from this app\'s developer comes with the ROM, so Ichthys Apps pins the key the installed copy is signed with now (SHA-256 %1$s). From then on, only updates signed with that key are installed.</string>
+    <string name="adopt_confirm">Keep updated</string>
+
+    <!-- Status -->
+    <string name="status_queued">Queued</string>
+    <string name="status_resolving">Looking up the latest version</string>
+    <string name="status_downloading">Downloading</string>
+    <string name="status_verifying">Checking signature</string>
+    <string name="status_installing">Installing</string>
+    <string name="status_uninstalling">Removing</string>
+    <string name="status_done">Installed</string>
+    <string name="status_removed">Removed</string>
+    <string name="status_up_to_date">Up to date</string>
+    <string name="status_waiting_wifi">Waiting for Wi-Fi</string>
+    <string name="status_user_action">Needs your confirmation</string>
+    <string name="status_failed">Failed: %1$s</string>
+    <string name="config_error">Could not save to ichthys.nix: %1$s</string>
+
+    <!-- Notifications -->
+    <string name="channel_setup">Recommended apps</string>
+    <string name="channel_setup_summary">Shown once after setup until you pick your apps</string>
+    <string name="channel_problems">Install and update problems</string>
+    <string name="channel_problems_summary">Failed installs and updates that need your confirmation</string>
+    <string name="channel_progress">Installs in progress</string>
+    <string name="channel_progress_summary">Shown while the apps you asked for are downloaded and installed</string>
+    <string name="notif_recommended_title">Recommended apps</string>
+    <string name="notif_recommended_text">Pick the apps to install from their sources. One tap installs them.</string>
+    <string name="notif_failed_title">%1$s: install failed</string>
+    <string name="notif_user_action_title">%1$s needs your confirmation</string>
+    <string name="notif_user_action_text">Tap to approve the install or update.</string>
+    <string name="notif_progress_title">Installing and updating apps</string>
+</resources>

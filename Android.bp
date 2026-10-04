@@ -1,0 +1,77 @@
+// IchthysOS: Ichthys Apps, the one installer and updater of the ROM. Its catalog
+// (/product/etc/ichthys/apps-catalog.json from packages/apps/IchthysPrebuilts/catalog.list) lists
+// the apps ichthys.nix recommends but the ROM does not ship (apps.install) and the image's
+// third-party system apps; apps.adopted adds the apps the user installed from elsewhere. Each is
+// downloaded on the device from its own source and checked against a pinned signing certificate
+// before it is installed or updated, silently. See README.md.
+//
+// Platform-signed priv-app: INSTALL_PACKAGES / DELETE_PACKAGES (signature|privileged) and
+// MANAGE_ICHTHYS_CONFIG (signature|privileged) for writing apps.* through the "ichthys_config"
+// binder; hidden APIs (IIchthysConfig, ApkSignatureVerifier) via platform_apis.
+
+package {
+    default_applicable_licenses: ["Android-Apache-2.0"],
+}
+
+android_app {
+    name: "IchthysApps",
+    srcs: ["src/**/*.kt"],
+    resource_dirs: ["res"],
+    platform_apis: true,
+    certificate: "platform",
+    privileged: true,
+    system_ext_specific: true,
+    static_libs: [
+        "androidx.activity_activity-compose",
+        "androidx.core_core-ktx",
+
+        // Jetpack Compose
+        "androidx.compose.runtime_runtime",
+        "androidx.compose.ui_ui",
+        "androidx.compose.ui_ui-text",
+        "androidx.compose.foundation_foundation",
+        "androidx.compose.foundation_foundation-layout",
+        "androidx.compose.material3_material3",
+
+        // Lifecycle / ViewModel for Compose
+        "androidx.lifecycle_lifecycle-runtime-compose",
+        "androidx.lifecycle_lifecycle-runtime-ktx",
+        "androidx.lifecycle_lifecycle-viewmodel-compose",
+        "androidx.lifecycle_lifecycle-viewmodel-ktx",
+
+        "kotlinx_coroutines",
+        "kotlinx_coroutines_android",
+    ],
+    optimize: {
+        optimize: true,
+        shrink_resources: true,
+    },
+    required: [
+        "privapp-permissions-org.ichthys.apps",
+        "default-permissions-org.ichthys.apps",
+        // The catalog (packages/apps/IchthysPrebuilts, /product/etc/ichthys): without it there is
+        // nothing to install or update.
+        "ichthys_apps_catalog",
+    ],
+}
+
+prebuilt_etc {
+    name: "privapp-permissions-org.ichthys.apps",
+    src: "privapp-permissions-org.ichthys.apps.xml",
+    // Without an explicit filename prebuilt_etc installs it under the module name, with no .xml
+    // extension, and SystemConfig skips it: enforce mode then crash-loops system_server.
+    filename: "privapp-permissions-org.ichthys.apps.xml",
+    sub_dir: "permissions",
+    system_ext_specific: true,
+}
+
+// POST_NOTIFICATIONS is a runtime permission. The first-run "Recommended apps" notification is
+// posted before the app was ever opened, so DefaultPermissionGrantPolicy grants it up front.
+prebuilt_etc {
+    name: "default-permissions-org.ichthys.apps",
+    src: "default-permissions-org.ichthys.apps.xml",
+    // Same as above: DefaultPermissionGrantPolicy only reads *.xml.
+    filename: "default-permissions-org.ichthys.apps.xml",
+    sub_dir: "default-permissions",
+    system_ext_specific: true,
+}
