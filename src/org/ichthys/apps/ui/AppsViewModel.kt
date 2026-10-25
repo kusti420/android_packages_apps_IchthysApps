@@ -218,6 +218,18 @@ class AppsViewModel(app: Application) : AndroidViewModel(app) {
         AppsManager.userSync(ctx, checkUpdates = true, only = setOf(id), force = true)
     }
 
+    /**
+     * Installed › Follow beta: the app gets pre-releases too. Turned on, its source is asked at
+     * once, so a newer beta is installed now.
+     */
+    fun setFollowBeta(id: String, on: Boolean) {
+        viewModelScope.launch(Dispatchers.IO) {
+            store.setFollowBeta(id, on)
+            refresh()
+            if (on) AppsManager.userSync(ctx, checkUpdates = true, only = setOf(id))
+        }
+    }
+
     fun checkAll() {
         AppsManager.userSync(ctx, checkUpdates = true)
     }

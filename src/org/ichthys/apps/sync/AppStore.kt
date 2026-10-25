@@ -18,6 +18,7 @@ package org.ichthys.apps.sync
 
 import android.content.Context
 import android.content.SharedPreferences
+import org.ichthys.apps.source.Release
 
 /** What Ichthys Apps remembers per app between runs (not configuration: that is ichthys.nix). */
 data class AppRecord(
@@ -25,6 +26,13 @@ data class AppRecord(
     val lastCheck: Long,
     /** The newest version name the source reported, if it reports one. */
     val latestVersion: String?,
+    /** Its versionCode, if the source reports one. */
+    val latestCode: Long?,
+    /** The newer pre-release the source reported ([Release.beta]): its version name, or null. */
+    val latestBeta: String?,
+    val latestBetaCode: Long?,
+    /** The user asked for this app's pre-releases too (Installed › Follow beta). */
+    val followBeta: Boolean,
     /** [org.ichthys.apps.source.Release.fingerprint] of the release installed or found old. */
     val fingerprint: String?,
     /** The last failure, cleared by a success. */
@@ -66,15 +74,35 @@ class AppStore(context: Context) {
         AppRecord(
             lastCheck = prefs.getLong("$id.lastCheck", 0L),
             latestVersion = prefs.getString("$id.latest", null),
+            latestCode = prefs.getLong("$id.latestCode", -1L).takeIf { it >= 0 },
+            latestBeta = prefs.getString("$id.beta", null),
+            latestBetaCode = prefs.getLong("$id.betaCode", -1L).takeIf { it >= 0 },
+            followBeta = prefs.getBoolean("$id.followBeta", false),
             fingerprint = prefs.getString("$id.fingerprint", null),
             lastError = prefs.getString("$id.error", null),
         )
 
-    fun checked(id: String, latestVersion: String?) {
+    /** The source was asked and answered [release]. */
+    fun checked(id: String, release: Release) {
         val edit = prefs.edit().putLong("$id.lastCheck", System.currentTimeMillis())
-        if (latestVersion != null) edit.putString("$id.latest", latestVersion)
+        if (release.versionName != null) edit.putString("$id.latest", release.versionName)
+        edit.putCode("$id.latestCode", release.versionCode)
+        // A source that couldn't look for a beta this time leaves the last answer standing.
+        if (release.betaChecked) {
+            val beta = release.beta
+            if (beta?.versionName != null) edit.putString("$id.beta", beta.versionName)
+            else edit.remove("$id.beta")
+            edit.putCode("$id.betaCode", beta?.versionCode)
+        }
         edit.apply()
     }
+
+    fun setFollowBeta(id: String, on: Boolean) {
+        prefs.edit().putBoolean("$id.followBeta", on).apply()
+    }
+
+    private fun SharedPreferences.Editor.putCode(key: String, code: Long?) =
+        if (code != null) putLong(key, code) else remove(key)
 
     fun setFingerprint(id: String, fingerprint: String?) {
         prefs
@@ -149,6 +177,10 @@ class AppStore(context: Context) {
             .edit()
             .remove("$id.lastCheck")
             .remove("$id.latest")
+            .remove("$id.latestCode")
+            .remove("$id.beta")
+            .remove("$id.betaCode")
+            .remove("$id.followBeta")
             .remove("$id.fingerprint")
             .remove("$id.error")
             .remove("$id.errorRepeats")

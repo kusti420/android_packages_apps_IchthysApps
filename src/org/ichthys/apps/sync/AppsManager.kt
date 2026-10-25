@@ -114,6 +114,10 @@ enum class Trigger {
  *
  * Updates run with apps.autoUpdate, or when the user asks.
  *
+ * Pre-releases ([Release.beta]) are recorded and shown, but only installed for an app that follows
+ * them: the user turned that on for it, or its installed version is already newer than the newest
+ * stable release (it was put on a beta), until a stable release overtakes it.
+ *
  * An install: resolve the newest release from the source → skip if it is provably not newer →
  * download to the cache → unpack (XAPK, zip) → verify every APK against the app's cert pins → one
  * PackageInstaller session → record the release fingerprint. An interrupted download stays in the
@@ -447,8 +451,9 @@ object AppsManager {
             val source = SourceRegistry.forSource(app.source)
             val metered = automatic && Network.isMetered(ctx)
             val device = DeviceSpec.of(ctx, saveData = metered)
-            val release = source.resolve(app.spec, device)
-            store.checked(app.id, release.versionName)
+            val found = source.resolve(app.spec, device)
+            store.checked(app.id, found)
+            val release = choose(found, installed, store.record(app.id))
             if (installed != null && !force && notNewer(release, installed, store.record(app.id))) {
                 keepWork = false
                 store.clearError(app.id)
@@ -583,6 +588,27 @@ object AppsManager {
         work.mkdirs()
         if (key != null) marker.writeText(key)
     }
+
+    /**
+     * The release to install: [found]'s beta for an app that follows betas (see the class comment),
+     * else the stable one. Without a newer beta, also a beta follower gets the stable release.
+     */
+    fun choose(found: Release, installed: PackageInfo?, record: AppRecord): Release {
+        val beta = found.beta ?: return found
+        return if (followsBeta(record, installed?.longVersionCode, found.versionCode)) beta
+        else found
+    }
+
+    /**
+     * Whether an app gets pre-releases: the user asked for them, or the installed version
+     * ([installedCode]) is newer than the newest stable one ([stableCode]).
+     */
+    fun followsBeta(record: AppRecord, installedCode: Long?, stableCode: Long?): Boolean =
+        record.followBeta || onBeta(installedCode, stableCode)
+
+    /** The installed version is newer than the newest stable release: a beta is installed. */
+    fun onBeta(installedCode: Long?, stableCode: Long?): Boolean =
+        installedCode != null && stableCode != null && installedCode > stableCode
 
     /** True when the release is provably the installed one (or one already found not newer). */
     private fun notNewer(release: Release, installed: PackageInfo, record: AppRecord): Boolean {

@@ -30,7 +30,8 @@ import java.security.MessageDigest
  * network ([DeviceSpec.saveData]) makes do with an index of the last [STALE_OK_MS] instead of
  * downloading the day's new one. The newest stable version this phone can run (minSdkVersion,
  * nativecode) is chosen, and its APK is checked against the index's SHA-256 on top of the
- * catalog's certificate pin.
+ * catalog's certificate pin. A newer build in a release channel ("Beta") comes along as
+ * [Release.beta].
  *
  * [lookup] answers whether a repo has a package at all and who signed it there, which is how an
  * app installed from elsewhere finds its update source.
@@ -69,7 +70,12 @@ object FdroidSource : Source {
         val versions = findVersions(index(repo, device.saveData), pkg)
         if (versions.isEmpty()) throw IOException("fdroid: $pkg not in $repo")
         val v = best(versions, device) ?: throw IOException("fdroid: no compatible $pkg build")
-        return Release(
+        val beta = best(versions, device, betas = true)?.takeIf { it.code > v.code }
+        return release(repo, v).copy(beta = beta?.let { release(repo, it) })
+    }
+
+    private fun release(repo: String, v: Version) =
+        Release(
             versionName = v.name,
             versionCode = v.code,
             fingerprint = v.sha256 ?: "${v.file}:${v.code}",
@@ -83,7 +89,6 @@ object FdroidSource : Source {
                     )
                 ),
         )
-    }
 
     /**
      * The newest stable build of [pkg] this phone can run in [repo] (f-droid.org by default), or
@@ -94,9 +99,14 @@ object FdroidSource : Source {
         return v?.let { Listing(it.name, it.signers.toSet()) }
     }
 
-    private fun best(versions: List<Version>, device: DeviceSpec): Version? =
+    /** The newest build this phone can run: stable only, or with [betas] any channel's. */
+    private fun best(
+        versions: List<Version>,
+        device: DeviceSpec,
+        betas: Boolean = false,
+    ): Version? =
         versions
-            .filter { it.stable && it.minSdk <= device.sdk }
+            .filter { (betas || it.stable) && it.minSdk <= device.sdk }
             .filter { it.nativecode.isEmpty() || it.nativecode.any { a -> a in device.abis } }
             .maxByOrNull { it.code }
 

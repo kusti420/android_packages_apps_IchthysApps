@@ -59,6 +59,12 @@
     <string name="installed_other_summary">Installed from a store, a download or a computer. Ichthys Apps can take over their updates, so a store is only needed for finding apps.</string>
     <string name="installed_other_from">from %1$s</string>
     <string name="installed_keep_updated">Keep updated</string>
+    <string name="installed_beta_available">%1$s beta available</string>
+    <!-- A pre-release whose name says so already: "2.0.0-beta3 available". -->
+    <string name="installed_prerelease_available">%1$s available</string>
+    <string name="installed_follow_beta">Follow beta</string>
+    <string name="installed_follow_beta_summary">Install pre-releases too, as soon as they\'re out. Off: stable releases only.</string>
+    <string name="installed_on_beta_summary">A beta is installed, so it keeps getting betas until a stable release is newer.</string>
 
     <!-- Keep updated (adopting an app installed from elsewhere) -->
     <string name="adopt_title">Keep %1$s updated?</string>

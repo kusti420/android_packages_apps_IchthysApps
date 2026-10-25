@@ -51,18 +51,25 @@ interface Source {
 }
 
 /**
- * The newest release a [Source] found. Any of the version fields may be unknown; then the APK is
- * downloaded and its versionCode compared before installing.
+ * The newest stable release a [Source] found. Any of the version fields may be unknown; then the
+ * APK is downloaded and its versionCode compared before installing.
  *
  * @property fingerprint identifies exactly this release (asset id + date, file name + size …). If
  *   it equals the fingerprint of the release last installed or found not newer, nothing changed and
  *   nothing is downloaded.
+ * @property beta a pre-release newer than this one (F-Droid's Beta channel, a GitHub
+ *   pre-release), when the source has one. Shown, but only installed for an app that follows
+ *   betas ([org.ichthys.apps.sync.AppsManager]).
+ * @property betaChecked whether the source looked for one: false when it could not this time (a
+ *   pass sparing mobile data, GitHub's website fallback), so a null [beta] says nothing.
  */
 data class Release(
     val versionName: String?,
     val versionCode: Long?,
     val fingerprint: String?,
     val files: List<RemoteFile>,
+    val beta: Release? = null,
+    val betaChecked: Boolean = true,
 )
 
 /**

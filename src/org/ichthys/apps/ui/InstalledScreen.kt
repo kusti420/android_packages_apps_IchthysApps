@@ -50,6 +50,7 @@ import org.ichthys.apps.R
 import org.ichthys.apps.catalog.CatalogApp
 import org.ichthys.apps.catalog.Kind
 import org.ichthys.apps.sync.AppRecord
+import org.ichthys.apps.sync.AppsManager
 import org.ichthys.apps.sync.OpState
 import org.ichthys.apps.sync.OtherApp
 import org.ichthys.apps.ui.theme.Shoal
@@ -60,9 +61,10 @@ private const val PIN_DIGITS = 16
 /**
  * Everything Ichthys Apps keeps updated, and what it could:
  * - the apps it manages: the catalog apps of apps.install (once confirmed) and the adopted apps
- *   (apps.adopted), each with its installed version (and the newest one the source reported),
- *   source, last check and "Update now". "Remove" (after a confirmation) drops a catalog app from
- *   apps.install, and the sync uninstalls it; "Stop updating" drops an adopted app from
+ *   (apps.adopted), each with its installed version (and the newest one the source reported, and
+ *   a newer beta), source, last check and "Update now"; "Follow beta" once there is a beta.
+ *   "Remove" (after a confirmation) drops a catalog app from apps.install, and the sync
+ *   uninstalls it; "Stop updating" drops an adopted app from
  *   apps.adopted and leaves it installed;
  * - the image's system apps, which are only updated;
  * - the other user apps, each with "Keep updated", which adopts it.
@@ -138,6 +140,7 @@ fun InstalledScreen(vm: AppsViewModel, padding: PaddingValues) {
                 record = records[app.id],
                 op = ops[app.id],
                 onUpdate = { vm.updateNow(app.id) },
+                onFollowBeta = { vm.setFollowBeta(app.id, it) },
                 onRemove = {
                     // Nothing is lost by no longer updating an app, so that needs no confirmation.
                     if (app.kind == Kind.ADOPTED) {
@@ -200,6 +203,7 @@ private fun InstalledCard(
     record: AppRecord?,
     op: OpState?,
     onUpdate: () -> Unit,
+    onFollowBeta: (Boolean) -> Unit,
     onRemove: () -> Unit,
 ) {
     val busy = op?.busy == true
@@ -231,6 +235,23 @@ private fun InstalledCard(
                 stringResource(R.string.installed_last_check),
                 relativeTime(record?.lastCheck ?: 0L, never),
             )
+        }
+        if (record != null) {
+            // Already on a beta: it follows betas until stable overtakes it, whatever the switch.
+            val onBeta = AppsManager.onBeta(installed?.versionCode, record.latestCode)
+            if (record.latestBeta != null || record.followBeta || onBeta) {
+                ToggleRow(
+                    label = stringResource(R.string.installed_follow_beta),
+                    supporting =
+                        stringResource(
+                            if (onBeta && !record.followBeta) R.string.installed_on_beta_summary
+                            else R.string.installed_follow_beta_summary
+                        ),
+                    checked = record.followBeta || onBeta,
+                    enabled = !busy && !(onBeta && !record.followBeta),
+                    onChange = onFollowBeta,
+                )
+            }
         }
         when {
             op != null -> OpStatus(op)
@@ -435,15 +456,43 @@ private fun AdoptDialogView(
     )
 }
 
-/** "1.2.3", or "1.2.3 → 1.3.0" when the source reported a newer one. */
+/**
+ * "1.2.3", "1.2.3 → 1.3.0" when the source reported a newer one, and " · 2.0.0 beta available"
+ * after it when it reported a newer pre-release. Compared by versionCode where the source gives
+ * one, else by name: an installed beta is not "older" than the stable release below it.
+ */
 @Composable
 private fun versionText(installed: InstalledApp?, record: AppRecord?): String {
     if (installed == null) return stringResource(R.string.installed_not_installed)
     val name = installed.versionName ?: installed.versionCode.toString()
-    val latest = record?.latestVersion
-    val same = latest == null || latest.removePrefix("v") == name.removePrefix("v")
-    return if (same) name else "$name → $latest"
+    if (record == null) return name
+    val update =
+        newer(installed, name, record.latestVersion, record.latestCode) &&
+            // A name-only source: the installed copy is the beta, not something older.
+            !sameName(record.latestBeta, name)
+    val stable = if (update) "$name → ${record.latestVersion}" else name
+    val beta = record.latestBeta
+    if (beta == null || !newer(installed, name, beta, record.latestBetaCode)) return stable
+    val labelled = Regex("alpha|beta|rc|pre", RegexOption.IGNORE_CASE).containsMatchIn(beta)
+    return stable +
+        " · " +
+        stringResource(
+            if (labelled) R.string.installed_prerelease_available
+            else R.string.installed_beta_available,
+            beta,
+        )
 }
+
+/** Whether the version [latest] (versionCode [code], if known) is newer than the installed one. */
+private fun newer(installed: InstalledApp, name: String, latest: String?, code: Long?): Boolean =
+    when {
+        code != null -> code > installed.versionCode
+        latest != null -> !sameName(latest, name)
+        else -> false
+    }
+
+private fun sameName(a: String?, b: String): Boolean =
+    a != null && a.removePrefix("v").removePrefix("V") == b.removePrefix("v").removePrefix("V")
 
 private fun shortPins(pins: Set<String>): String =
     pins.sorted().joinToString { it.take(PIN_DIGITS) + "…" }

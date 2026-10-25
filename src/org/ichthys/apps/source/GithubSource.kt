@@ -40,6 +40,10 @@ import org.json.JSONObject
  * With an entry regex the asset is a zip (BCR ships a flashable module) and the APK is the first
  * entry of it whose path matches.
  *
+ * A pre-release newer than that release, with a matching asset, comes along as [Release.beta]:
+ * looked for among the [BETA_RELEASES] newest releases, with a second request (the release list
+ * is large, so it is never asked for more than that). A pass sparing mobile data doesn't look.
+ *
  * The API allows 60 requests an hour to callers without an account, counted per address, and a
  * phone often shares its address with many others. When the API refuses for that (403 or 429), the
  * release is read from the website instead: github.com/<owner>/<repo>/releases/latest redirects to
@@ -52,6 +56,9 @@ object GithubSource : Source {
 
     /** How many recent releases are looked through when the latest one has no matching asset. */
     private const val RECENT_RELEASES = 30
+
+    /** How many of the newest releases are looked through for a pre-release. */
+    private const val BETA_RELEASES = 5
     private val ABI_WORDS =
         mapOf(
             "arm64-v8a" to listOf("arm64-v8a", "arm64_v8a", "arm64", "aarch64", "armv8"),
@@ -97,13 +104,31 @@ object GithubSource : Source {
 
     override fun resolve(spec: String, device: DeviceSpec): Release {
         val s = parse(spec)
+        var api = true
         val found =
             try {
                 fromApi(s)
             } catch (e: HttpException) {
                 if (e.code != 403 && e.code != 429) throw e
+                api = false
                 fromWeb(s)
             }
+        // The website lists no pre-releases cheaply; a failed look is no reason to fail the update.
+        var betaChecked = api && !device.saveData
+        val beta =
+            if (!betaChecked) null
+            else
+                try {
+                    prerelease(s, found.tag)
+                } catch (e: IOException) {
+                    betaChecked = false
+                    null
+                }
+        return release(found, device)
+            .copy(beta = beta?.let { release(it, device) }, betaChecked = betaChecked)
+    }
+
+    private fun release(found: Found, device: DeviceSpec): Release {
         val asset = found.assets.minBy { abiRank(it.name, device) }
         return Release(
             versionName = versionOf(found.tag),
@@ -114,6 +139,33 @@ object GithubSource : Source {
                     RemoteFile(url = asset.url, name = Http.safeName(asset.name), size = asset.size)
                 ),
         )
+    }
+
+    /**
+     * The newest pre-release with a matching asset that is newer than the release [stableTag], or
+     * null. The API lists releases newest first, so that is one listed before it.
+     */
+    private fun prerelease(s: Spec, stableTag: String): Found? {
+        for (release in releases(s, BETA_RELEASES)) {
+            if (release.optString("tag_name") == stableTag) return null
+            if (release.optBoolean("draft") || !release.optBoolean("prerelease")) continue
+            matching(release, s.asset)?.let {
+                return it
+            }
+        }
+        return null
+    }
+
+    /** The [count] newest releases, from the API. */
+    private fun releases(s: Spec, count: Int): List<JSONObject> {
+        val url = "https://api.github.com/repos/${s.repo}/releases?per_page=$count"
+        val releases =
+            try {
+                JSONArray(Http.text(url, accept = "application/vnd.github+json"))
+            } catch (e: JSONException) {
+                throw IOException("bad JSON from $url: ${e.message}", e)
+            }
+        return (0 until releases.length()).mapNotNull { releases.optJSONObject(it) }
     }
 
     private fun noMatch(s: Spec) =
@@ -204,16 +256,8 @@ object GithubSource : Source {
 
     /** The newest recent release (no draft, no prerelease) with a matching asset. */
     private fun recent(s: Spec): Found? {
-        val url = "https://api.github.com/repos/${s.repo}/releases?per_page=$RECENT_RELEASES"
-        val releases =
-            try {
-                JSONArray(Http.text(url, accept = "application/vnd.github+json"))
-            } catch (e: JSONException) {
-                throw IOException("bad JSON from $url: ${e.message}", e)
-            }
         // The API lists them newest first.
-        for (i in 0 until releases.length()) {
-            val release = releases.optJSONObject(i) ?: continue
+        for (release in releases(s, RECENT_RELEASES)) {
             if (release.optBoolean("draft") || release.optBoolean("prerelease")) continue
             matching(release, s.asset)?.let {
                 return it
