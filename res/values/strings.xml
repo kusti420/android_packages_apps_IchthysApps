@@ -23,12 +23,23 @@
 
     <!-- Recommended -->
     <string name="recommended_title">Recommended apps</string>
-    <string name="recommended_summary">Downloaded from each developer\'s own source on this phone and checked against their signing key. None of these is in the ROM. The stores are for finding apps: what you install from them, Ichthys Apps can keep updated.</string>
+    <!-- IchthysOS: several entries come from mirrors (APKPure, a download page), so the source is
+         named per app; the signing-key pin is what makes any of them trustworthy. -->
+    <string name="recommended_summary">Downloaded on this phone from the source shown under each app, and installed only if it is signed with the developer\'s key. None of these is in the ROM. The stores are for finding apps: what you install from them, Ichthys Apps can keep updated.</string>
     <string name="recommended_install">Install</string>
     <string name="recommended_install_count">Install %1$d</string>
     <string name="recommended_apply">Apply</string>
     <string name="recommended_none">Install none</string>
-    <string name="recommended_removes">Unchecked and installed: %1$s will be removed.</string>
+    <!-- IchthysOS: removal uninstalls the app with its data (AppsManager.removeDropped), so the
+         warning says so, like the Installed tab's Remove dialog. %1$s: the app names. -->
+    <plurals name="recommended_removes">
+        <item quantity="one">Unchecked: %1$s will be uninstalled, with its data.</item>
+        <item quantity="other">Unchecked: %1$s will be uninstalled, with their data.</item>
+    </plurals>
+    <!-- IchthysOS: the tag of an installed app whose version name isn't known. -->
+    <string name="recommended_installed_tag">installed</string>
+    <!-- IchthysOS: a copy installed from elsewhere with a signer the catalog doesn't pin. -->
+    <string name="recommended_other_signer">The copy on this phone is signed with another key, so Ichthys Apps can\'t update it. Uninstall that copy, then tick it here to get this one.</string>
     <string name="recommended_empty">The catalog is empty or missing (/product/etc/ichthys/apps-catalog.json).</string>
 
     <!-- Installed -->
@@ -39,10 +50,16 @@
     <string name="installed_remove">Remove</string>
     <string name="installed_remove_title">Remove %1$s?</string>
     <string name="installed_remove_text">The app is uninstalled together with its data, and leaves apps.install.</string>
+    <!-- IchthysOS: Remove on an app whose copy has another signer only forgets it
+         (AppsManager.removeDropped), and on one that isn't installed only drops it. -->
+    <string name="installed_remove_text_other_signer">It leaves apps.install. The copy on this phone is signed with another key, so it isn\'t uninstalled: it stays, with its data.</string>
+    <string name="installed_remove_text_not_installed">It isn\'t installed, so nothing is uninstalled. It leaves apps.install and won\'t be installed.</string>
     <string name="installed_version">Version</string>
     <string name="installed_source">Source</string>
     <string name="installed_last_check">Last check</string>
     <string name="installed_never">never</string>
+    <!-- IchthysOS: under a minute ago (DateUtils would say "0 minutes ago"). -->
+    <string name="installed_just_now">just now</string>
     <string name="installed_not_installed">not installed</string>
     <string name="installed_settings">Updates</string>
     <string name="installed_auto_update">Update automatically</string>
@@ -59,6 +76,10 @@
     <string name="installed_other_summary">Installed from a store, a download or a computer. Ichthys Apps can take over their updates, so a store is only needed for finding apps.</string>
     <string name="installed_other_from">from %1$s</string>
     <string name="installed_keep_updated">Keep updated</string>
+    <!-- IchthysOS: shown until the installed apps have been read for the first time. -->
+    <string name="apps_loading">Reading the apps on this phone</string>
+    <!-- IchthysOS: shown on both tabs while the phone has no internet connection. -->
+    <string name="offline_note">No connection. Installs and update checks can\'t reach their sources until the phone is online.</string>
     <string name="installed_beta_available">%1$s beta available</string>
     <!-- A pre-release whose name says so already: "2.0.0-beta3 available". -->
     <string name="installed_prerelease_available">%1$s available</string>
@@ -71,6 +92,8 @@
     <string name="adopt_looking">Looking it up on F-Droid</string>
     <string name="adopt_found">Source: %1$s</string>
     <string name="adopt_not_found">F-Droid doesn\'t have this app. Where do its updates come from?</string>
+    <!-- IchthysOS: the F-Droid lookup itself failed (offline, index unreadable): not "doesn't have". -->
+    <string name="adopt_lookup_failed">Couldn\'t look it up on F-Droid. Where do its updates come from?</string>
     <string name="adopt_other_signer">F-Droid has this app, but signs it with another key than the copy installed here, so its builds can\'t update this one. Where do its updates come from?</string>
     <string name="adopt_source_hint">GitHub or GitLab project, or https link to the APK</string>
     <string name="adopt_use_apkpure">Use APKPure</string>
@@ -87,6 +110,10 @@
     <string name="status_installing">Installing</string>
     <string name="status_uninstalling">Removing</string>
     <string name="status_done">Installed</string>
+    <!-- IchthysOS: a newer version was installed over the one on the phone. -->
+    <string name="status_updated">Updated</string>
+    <!-- IchthysOS: the job was stopped by the system mid-way (was "Failed: cancelled"). -->
+    <string name="status_interrupted">Stopped before it finished</string>
     <string name="status_removed">Removed</string>
     <string name="status_up_to_date">Up to date</string>
     <string name="status_waiting_wifi">Waiting for Wi-Fi</string>
@@ -96,7 +123,8 @@
 
     <!-- Notifications -->
     <string name="channel_setup">Recommended apps</string>
-    <string name="channel_setup_summary">Shown once after setup until you pick your apps</string>
+    <!-- IchthysOS: Notifications.checkFirstRun posts it once per boot until apps are picked. -->
+    <string name="channel_setup_summary">Shown after each restart until you pick your apps</string>
     <string name="channel_problems">Install and update problems</string>
     <string name="channel_problems_summary">Failed installs and updates that need your confirmation</string>
     <string name="channel_progress">Installs in progress</string>
@@ -104,7 +132,16 @@
     <string name="notif_recommended_title">Recommended apps</string>
     <string name="notif_recommended_text">Pick the apps to install from their sources. One tap installs them.</string>
     <string name="notif_failed_title">%1$s: install failed</string>
+    <!-- IchthysOS: an update of an installed app failed, or the system refused to remove one. -->
+    <string name="notif_update_failed_title">%1$s: update failed</string>
+    <string name="notif_remove_failed_title">%1$s: couldn\'t be removed</string>
+    <!-- IchthysOS: repeated background update-check failures; the installed app still works. -->
+    <string name="notif_check_failed_title">%1$s: couldn\'t check for updates</string>
     <string name="notif_user_action_title">%1$s needs your confirmation</string>
     <string name="notif_user_action_text">Tap to approve the install or update.</string>
+    <!-- IchthysOS: the confirmation is for an uninstall (the app left apps.install). -->
+    <string name="notif_user_action_remove_text">Tap to confirm the removal.</string>
     <string name="notif_progress_title">Installing and updating apps</string>
+    <!-- IchthysOS: the app being worked on and its stage, e.g. "Termux · Downloading". -->
+    <string name="notif_progress_text">%1$s · %2$s</string>
 </resources>

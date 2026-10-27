@@ -24,7 +24,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.IntrinsicSize
@@ -34,6 +33,8 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
@@ -47,6 +48,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -74,8 +76,18 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
-        tab.value = if (AppsConfig.read(this).ready) Tab.INSTALLED else Tab.RECOMMENDED
-        handleIntent(intent)
+        // IchthysOS: a recreation (rotation, dark mode, font size) keeps the tab the user was on;
+        // it used to jump back to the default tab, or to the launching notification's.
+        val saved =
+            savedInstanceState?.getString(STATE_TAB)?.let { name ->
+                Tab.entries.firstOrNull { it.name == name }
+            }
+        if (saved != null) {
+            tab.value = saved
+        } else {
+            tab.value = if (AppsConfig.read(this).ready) Tab.INSTALLED else Tab.RECOMMENDED
+            handleIntent(intent)
+        }
         UpdateJob.scheduleAll(this)
         // Normally pre-granted (default-permissions-org.ichthys.apps.xml). If it was revoked, ask
         // once; after a denial the user is not asked again on every launch.
@@ -89,6 +101,11 @@ class MainActivity : ComponentActivity() {
             requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
         }
         setContent { AppsTheme { AppsApp(tab.value) { tab.value = it } } }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putString(STATE_TAB, tab.value.name)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -116,6 +133,7 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val ACTION_RECOMMENDED = "org.ichthys.apps.action.RECOMMENDED"
         const val ACTION_INSTALLED = "org.ichthys.apps.action.INSTALLED"
+        private const val STATE_TAB = "tab"
     }
 }
 
@@ -152,12 +170,14 @@ private fun TabBar(tab: Tab, onTab: (Tab) -> Unit) {
             color = t.muted,
             modifier = Modifier.padding(start = 16.dp, top = 12.dp),
         )
-        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp)) {
+        // IchthysOS: real tabs for TalkBack ("Installed, tab, 2 of 2, selected"), not bare
+        // clickable text.
+        Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp).selectableGroup()) {
             for (item in Tab.entries) {
                 val selected = item == tab
                 Column(
                     Modifier.width(IntrinsicSize.Max)
-                        .clickable { onTab(item) }
+                        .selectable(selected = selected, role = Role.Tab, onClick = { onTab(item) })
                         .padding(horizontal = 8.dp)
                 ) {
                     Text(

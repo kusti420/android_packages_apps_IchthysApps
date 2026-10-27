@@ -22,6 +22,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.database.ContentObserver
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.Handler
 import android.os.Looper
 import androidx.lifecycle.AndroidViewModel
@@ -30,6 +32,7 @@ import androidx.lifecycle.ViewModelProvider.AndroidViewModelFactory.Companion.AP
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.initializer
 import androidx.lifecycle.viewmodel.viewModelFactory
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +41,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import org.ichthys.apps.R
 import java.io.IOException
 import org.ichthys.apps.catalog.Catalog
@@ -53,12 +58,23 @@ import org.ichthys.apps.sync.Adoption
 import org.ichthys.apps.sync.AppRecord
 import org.ichthys.apps.sync.AppStore
 import org.ichthys.apps.sync.AppsManager
+import org.ichthys.apps.sync.Network
 import org.ichthys.apps.sync.OpState
 import org.ichthys.apps.sync.OtherApp
 import org.ichthys.apps.sync.SourceLookup
 
-/** What the phone has installed for one app. */
-data class InstalledApp(val versionName: String?, val versionCode: Long)
+/**
+ * What the phone has installed for one app.
+ *
+ * @property pinned the installed copy is signed with a certificate the catalog (or the adoption)
+ *   pins. IchthysOS: false for a copy from elsewhere with another signer (Termux from GitHub
+ *   rather than F-Droid, …), which Ichthys Apps can't update and must never uninstall.
+ */
+data class InstalledApp(
+    val versionName: String?,
+    val versionCode: Long,
+    val pinned: Boolean = true,
+)
 
 /**
  * The "Keep updated" dialog for one app installed from elsewhere.
@@ -67,6 +83,8 @@ data class InstalledApp(val versionName: String?, val versionCode: Long)
  * @property looking the F-Droid lookup is still running
  * @property found the source the lookup found; null: the user names one
  * @property otherSigner F-Droid has the app, but signs it with another key
+ * @property lookupFailed IchthysOS: the F-Droid lookup itself failed (offline, unreadable index),
+ *   so it is not known whether F-Droid has the app
  * @property working the source is being checked and the adoption written
  * @property error why the last attempt failed
  */
@@ -76,6 +94,7 @@ data class AdoptDialog(
     val looking: Boolean = true,
     val found: String? = null,
     val otherSigner: Boolean = false,
+    val lookupFailed: Boolean = false,
     val working: Boolean = false,
     val error: String? = null,
 )
@@ -121,6 +140,35 @@ class AppsViewModel(app: Application) : AndroidViewModel(app) {
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
+    /**
+     * IchthysOS: false until [refresh] has read the installed apps once. Until then [installed] is
+     * empty, so the screens would show every app as "not installed" and pre-check the defaults
+     * without the installed catalog apps (reading the signers takes a moment for big APKs).
+     */
+    private val _loaded = MutableStateFlow(false)
+    val loaded: StateFlow<Boolean> = _loaded.asStateFlow()
+
+    /** IchthysOS: the phone has a network with internet (the screens say so when it hasn't). */
+    private val _online = MutableStateFlow(Network.isConnected(ctx))
+    val online: StateFlow<Boolean> = _online.asStateFlow()
+
+    /** IchthysOS: one [refresh] at a time, so an older one can't overwrite a newer one's result. */
+    private val refreshLock = Mutex()
+
+    private val networkCallback =
+        object : ConnectivityManager.NetworkCallback() {
+            override fun onCapabilitiesChanged(
+                network: android.net.Network,
+                caps: NetworkCapabilities,
+            ) {
+                _online.value = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            }
+
+            override fun onLost(network: android.net.Network) {
+                _online.value = false
+            }
+        }
+
     private val observer =
         object : ContentObserver(Handler(Looper.getMainLooper())) {
             override fun onChange(selfChange: Boolean) {
@@ -146,6 +194,12 @@ class AppsViewModel(app: Application) : AndroidViewModel(app) {
                 addDataScheme("package")
             }
         ctx.registerReceiver(packageReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        try {
+            ctx.getSystemService(ConnectivityManager::class.java)
+                ?.registerDefaultNetworkCallback(networkCallback)
+        } catch (e: RuntimeException) {
+            // Only the offline note depends on it.
+        }
         // Re-read installed versions when an operation settles (not on every progress tick).
         viewModelScope.launch {
             AppsManager.ops
@@ -159,24 +213,35 @@ class AppsViewModel(app: Application) : AndroidViewModel(app) {
     override fun onCleared() {
         ctx.contentResolver.unregisterContentObserver(observer)
         ctx.unregisterReceiver(packageReceiver)
+        try {
+            ctx.getSystemService(ConnectivityManager::class.java)
+                ?.unregisterNetworkCallback(networkCallback)
+        } catch (e: RuntimeException) {
+            // Was never registered.
+        }
     }
 
     fun refresh() {
         viewModelScope.launch(Dispatchers.IO) {
-            val state = AppsConfig.read(ctx)
-            val adoptedApps = Adoption.apps(ctx, state)
-            val inst = HashMap<String, InstalledApp>()
-            val recs = HashMap<String, AppRecord>()
-            for (app in catalog.apps + adoptedApps) {
-                AppsManager.installedInfo(ctx, app.packageName)?.let {
-                    inst[app.id] = InstalledApp(it.versionName, it.longVersionCode)
+            refreshLock.withLock {
+                val state = AppsConfig.read(ctx)
+                val adoptedApps = Adoption.apps(ctx, state)
+                val inst = HashMap<String, InstalledApp>()
+                val recs = HashMap<String, AppRecord>()
+                for (app in catalog.apps + adoptedApps) {
+                    AppsManager.installedInfo(ctx, app.packageName)?.let {
+                        val pinned =
+                            CertVerifier.installedMatches(ctx, app.packageName, app.certs) == true
+                        inst[app.id] = InstalledApp(it.versionName, it.longVersionCode, pinned)
+                    }
+                    recs[app.id] = store.record(app.id)
                 }
-                recs[app.id] = store.record(app.id)
+                _installed.value = inst
+                _records.value = recs
+                _adopted.value = adoptedApps
+                _others.value = Adoption.others(ctx, catalog, state)
+                _loaded.value = true
             }
-            _installed.value = inst
-            _records.value = recs
-            _adopted.value = adoptedApps
-            _others.value = Adoption.others(ctx, catalog, state)
         }
     }
 
@@ -185,10 +250,15 @@ class AppsViewModel(app: Application) : AndroidViewModel(app) {
      * that was never written, the catalog's `default` ids and the catalog apps that are on the
      * phone already. Earlier builds shipped some of them (Termux, KernelSU Next, …); what is
      * installed stays looked after unless the user unchecks it.
+     *
+     * IchthysOS: only a copy signed with the pinned certificate counts as installed here. One
+     * from elsewhere with another signer is never pre-checked (not even as a default): Ichthys
+     * Apps couldn't update it, and dropping it later would uninstall the user's own copy.
      */
     fun preChecked(config: AppsState, installed: Map<String, InstalledApp>): Set<String> =
         config.install?.toSet()
             ?: (catalog.defaultIds + catalog.recommended.map { it.id }.filter { it in installed })
+                .filter { installed[it]?.pinned != false }
                 .toSet()
 
     /** The checked ids: the edit in progress, else [preChecked]. */
@@ -239,9 +309,14 @@ class AppsViewModel(app: Application) : AndroidViewModel(app) {
      * same build, that is its source; otherwise the dialog asks for one.
      */
     fun startAdopt(app: OtherApp) {
-        val pins = CertVerifier.installedSigners(ctx, app.packageName).orEmpty()
-        _adopting.value = AdoptDialog(app, pins)
+        _adopting.value = AdoptDialog(app, emptySet())
         viewModelScope.launch(Dispatchers.IO) {
+            // IchthysOS: read off the main thread. Reading the signers verifies the whole APK,
+            // which for a big one froze the tap on "Keep updated".
+            val pins = CertVerifier.installedSigners(ctx, app.packageName).orEmpty()
+            _adopting.update { d ->
+                if (d == null || d.app.packageName != app.packageName) d else d.copy(pins = pins)
+            }
             val result = Adoption.lookUp(ctx, app.packageName)
             _adopting.update { d ->
                 // Closed, or opened for another app, in the meantime.
@@ -250,7 +325,8 @@ class AppsViewModel(app: Application) : AndroidViewModel(app) {
                     is SourceLookup.Found -> d.copy(looking = false, found = result.source)
                     SourceLookup.OtherSigner -> d.copy(looking = false, otherSigner = true)
                     SourceLookup.NotFound -> d.copy(looking = false)
-                    is SourceLookup.Failed -> d.copy(looking = false, error = result.message)
+                    is SourceLookup.Failed ->
+                        d.copy(looking = false, lookupFailed = true, error = result.message)
                 }
             }
         }
@@ -282,12 +358,22 @@ class AppsViewModel(app: Application) : AndroidViewModel(app) {
                         SourceRegistry.forSource(source)
                             .resolve(source.substringAfter(':'), DeviceSpec.of(ctx))
                     }
+                    // IchthysOS: Cancel while the source was being checked means no: the app
+                    // used to be adopted anyway once the check came back.
+                    if (_adopting.value?.app?.packageName != pkg) return@launch
                     AppsManager.adopt(ctx, pkg, source)
                     null
                 } catch (e: IOException) {
                     e.message ?: e.javaClass.simpleName
                 } catch (e: ConfigException) {
                     ctx.getString(R.string.config_error, e.message ?: "")
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: RuntimeException) {
+                    // IchthysOS: a typed source whose index or page isn't the expected shape
+                    // (JsonReader throws IllegalStateException / NumberFormatException) is an
+                    // error in the dialog, not a crash of the app.
+                    e.message ?: e.javaClass.simpleName
                 }
             _adopting.update { d ->
                 when {

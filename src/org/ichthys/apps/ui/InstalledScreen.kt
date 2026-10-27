@@ -43,6 +43,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -80,6 +82,8 @@ fun InstalledScreen(vm: AppsViewModel, padding: PaddingValues) {
     val adopted by vm.adopted.collectAsStateWithLifecycle()
     val others by vm.others.collectAsStateWithLifecycle()
     val adopting by vm.adopting.collectAsStateWithLifecycle()
+    val loaded by vm.loaded.collectAsStateWithLifecycle()
+    val online by vm.online.collectAsStateWithLifecycle()
     val apps = config.managed(vm.catalog).mapNotNull { vm.catalog[it] } + adopted
     val system = vm.catalog.bundled.filter { it.id in installed }
     val busy = ops.values.any { it.busy }
@@ -92,22 +96,22 @@ fun InstalledScreen(vm: AppsViewModel, padding: PaddingValues) {
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp),
     ) {
         item {
-            Row(
-                Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Text(
-                    stringResource(R.string.installed_title),
-                    style = MaterialTheme.typography.headlineSmall,
-                    modifier = Modifier.weight(1f),
-                )
-                if (apps.isNotEmpty() || system.isNotEmpty()) {
-                    QuietButton(
-                        stringResource(R.string.installed_check_all),
-                        onClick = { vm.checkAll() },
-                        enabled = !busy,
+            Column(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.installed_title),
+                        style = MaterialTheme.typography.headlineSmall,
+                        modifier = Modifier.weight(1f).semantics { heading() },
                     )
+                    if (apps.isNotEmpty() || system.isNotEmpty()) {
+                        QuietButton(
+                            stringResource(R.string.installed_check_all),
+                            onClick = { vm.checkAll() },
+                            enabled = !busy,
+                        )
+                    }
                 }
+                if (!online) OfflineNote()
             }
         }
         item {
@@ -125,6 +129,11 @@ fun InstalledScreen(vm: AppsViewModel, padding: PaddingValues) {
                     onChange = { vm.setWifiOnly(it) },
                 )
             }
+        }
+        if (!loaded) {
+            // IchthysOS: until the installed apps are read, every card would say "not installed".
+            item { LoadingCard() }
+            return@LazyColumn
         }
         if (apps.isEmpty()) {
             item {
@@ -176,9 +185,20 @@ fun InstalledScreen(vm: AppsViewModel, padding: PaddingValues) {
         item { Spacer(Modifier.padding(bottom = 24.dp)) }
     }
     removing?.let { app ->
+        // IchthysOS: say what Remove really does. Only a copy signed with the pinned key is
+        // uninstalled (AppsManager.removeDropped); one with another signer is only forgotten, and
+        // one that isn't installed is only dropped from the list.
+        val copy = installed[app.id]
         ConfirmDialog(
             title = stringResource(R.string.installed_remove_title, app.name),
-            text = stringResource(R.string.installed_remove_text),
+            text =
+                stringResource(
+                    when {
+                        copy == null -> R.string.installed_remove_text_not_installed
+                        !copy.pinned -> R.string.installed_remove_text_other_signer
+                        else -> R.string.installed_remove_text
+                    }
+                ),
             confirm = stringResource(R.string.installed_remove),
             onConfirm = {
                 removing = null
@@ -221,6 +241,7 @@ private fun InstalledCard(
             }
         }
         val never = stringResource(R.string.installed_never)
+        val justNow = stringResource(R.string.installed_just_now)
         Column(Modifier.padding(top = 8.dp)) {
             Field(stringResource(R.string.installed_version), versionText(installed, record))
             Field(stringResource(R.string.installed_source), app.source)
@@ -233,7 +254,7 @@ private fun InstalledCard(
             }
             Field(
                 stringResource(R.string.installed_last_check),
-                relativeTime(record?.lastCheck ?: 0L, never),
+                relativeTime(record?.lastCheck ?: 0L, never, justNow),
             )
         }
         if (record != null) {
@@ -258,10 +279,16 @@ private fun InstalledCard(
             record?.lastError != null -> OpStatus(OpState.Failed(record.lastError))
         }
         Row(Modifier.fillMaxWidth().padding(top = 12.dp)) {
+            // IchthysOS: for a catalog app that isn't on the phone (its install failed or was
+            // declined) the same action installs it, so it says "Install". An adopted app is never
+            // installed by Ichthys Apps (the sync skips it), so the button is off until it is back.
             QuietButton(
-                stringResource(R.string.installed_update_now),
+                stringResource(
+                    if (installed == null && !adopted) R.string.recommended_install
+                    else R.string.installed_update_now
+                ),
                 onClick = onUpdate,
-                enabled = !busy,
+                enabled = !busy && !(adopted && installed == null),
                 modifier = Modifier.weight(1f),
             )
             Spacer(Modifier.width(8.dp))
@@ -400,8 +427,12 @@ private fun AdoptDialogView(
                     else -> {
                         Text(
                             stringResource(
-                                if (dialog.otherSigner) R.string.adopt_other_signer
-                                else R.string.adopt_not_found
+                                when {
+                                    dialog.otherSigner -> R.string.adopt_other_signer
+                                    // IchthysOS: a failed lookup isn't "F-Droid doesn't have it".
+                                    dialog.lookupFailed -> R.string.adopt_lookup_failed
+                                    else -> R.string.adopt_not_found
+                                }
                             ),
                             style = MaterialTheme.typography.bodyMedium,
                         )
@@ -438,11 +469,15 @@ private fun AdoptDialogView(
                         modifier = Modifier.padding(top = 8.dp),
                     )
                 }
-                Text(
-                    stringResource(R.string.adopt_tofu, shortPins(dialog.pins)),
-                    style = MaterialTheme.typography.bodySmall,
-                    modifier = Modifier.padding(top = 12.dp),
-                )
+                // IchthysOS: the pins are read off the main thread now; no "SHA-256 " with nothing
+                // after it while they load.
+                if (dialog.pins.isNotEmpty()) {
+                    Text(
+                        stringResource(R.string.adopt_tofu, shortPins(dialog.pins)),
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 12.dp),
+                    )
+                }
             }
         },
         modifier =
@@ -514,7 +549,8 @@ private fun Hairline() {
 
 @Composable
 private fun Field(label: String, value: String) {
-    Row(Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+    // IchthysOS: label and value read as one item by TalkBack.
+    Row(Modifier.fillMaxWidth().semantics(mergeDescendants = true) {}.padding(vertical = 2.dp)) {
         Text(
             label.uppercase(),
             style = MaterialTheme.typography.labelSmall.copy(fontFamily = Shoal.tokens.mono),

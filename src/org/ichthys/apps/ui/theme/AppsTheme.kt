@@ -167,6 +167,10 @@ private fun schemeFor(t: AppsTokens, night: Boolean): ColorScheme {
         surfaceContainerHighest = t.raised,
         outline = t.outline,
         outlineVariant = t.hairline,
+        // IchthysOS: the snackbar (config write errors) is drawn in inverseSurface; left at the
+        // M3 baseline it was a fixed grey that ignores the palette in both themes.
+        inverseSurface = t.text,
+        inverseOnSurface = t.ink,
         error = t.danger,
     )
 }

@@ -105,7 +105,10 @@ data class AppsState(
      * a bundled app is not something apps.install decides about.
      */
     fun managed(catalog: Catalog): List<String> =
-        if (ready) install.orEmpty().filter { catalog[it]?.kind == Kind.APP } else emptyList()
+        // IchthysOS: distinct, so a list written by hand with an id twice doesn't crash the
+        // Installed tab (its LazyColumn keys are the ids) or handle the app twice per pass.
+        if (ready) install.orEmpty().filter { catalog[it]?.kind == Kind.APP }.distinct()
+        else emptyList()
 }
 
 /** A write through the ichthys_config binder failed (bad snippet, missing service or option). */
@@ -207,6 +210,11 @@ object AppsConfig {
             throw ConfigException(e.message ?: "permission denied", e)
         } catch (e: RemoteException) {
             throw ConfigException("$SERVICE died", e)
+        } catch (e: RuntimeException) {
+            // IchthysOS: any other exception the binder carries back (IllegalStateException,
+            // NullPointerException, …) is a refused write too. Callers catch ConfigException; an
+            // uncaught one here crashed the app from its viewModelScope.
+            throw ConfigException(e.message ?: e.javaClass.simpleName, e)
         }
     }
 

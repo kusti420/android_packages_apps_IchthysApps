@@ -19,6 +19,7 @@ package org.ichthys.apps.sync
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
+import android.content.pm.PackageInstaller
 import android.content.pm.PackageManager
 import android.provider.Settings
 import android.util.Log
@@ -47,6 +48,7 @@ import org.ichthys.apps.install.CertVerifier
 import org.ichthys.apps.install.Installer
 import org.ichthys.apps.install.Outcome
 import org.ichthys.apps.notify.Notifications
+import org.ichthys.apps.notify.Notifications.FailureKind
 import org.ichthys.apps.source.DeviceSpec
 import org.ichthys.apps.source.Http
 import org.ichthys.apps.source.Release
@@ -71,6 +73,15 @@ sealed interface OpState {
     data object Uninstalling : OpState
 
     data object Done : OpState
+
+    /** IchthysOS: a newer version was installed over the one on the phone. */
+    data object Updated : OpState
+
+    /**
+     * IchthysOS: stopped from outside (the job's time or network went) before it finished; what was
+     * downloaded stays for the next attempt. Was shown as "Failed: cancelled".
+     */
+    data object Interrupted : OpState
 
     data object Removed : OpState
 
@@ -389,6 +400,15 @@ object AppsManager {
                 store.forget(id)
                 continue
             }
+            // IchthysOS: a copy with another signer was installed from elsewhere (Termux from
+            // GitHub, …); Ichthys Apps never managed it, so it stops tracking it and leaves the
+            // app and its data alone.
+            if (CertVerifier.installedMatches(ctx, app.packageName, app.certs) != true) {
+                store.forget(id)
+                workDir(ctx, id).deleteRecursively()
+                Notifications.cancelProblem(ctx, app)
+                continue
+            }
             set(id, OpState.Uninstalling)
             when (val outcome = Installer.uninstall(ctx, app)) {
                 Outcome.Success -> {
@@ -404,7 +424,7 @@ object AppsManager {
                 is Outcome.Failure -> {
                     set(id, OpState.Failed(outcome.message))
                     if (store.setError(id, outcome.message) == 1) {
-                        Notifications.failure(ctx, app, outcome.message)
+                        Notifications.failure(ctx, app, outcome.message, FailureKind.REMOVE)
                     }
                 }
             }
@@ -454,7 +474,14 @@ object AppsManager {
             val found = source.resolve(app.spec, device)
             store.checked(app.id, found)
             val release = choose(found, installed, store.record(app.id))
-            if (installed != null && !force && notNewer(release, installed, store.record(app.id))) {
+            // IchthysOS: "Update now" (force) skips only the name and fingerprint guesses; a
+            // versionCode the source states that isn't newer still means up to date, as the KDoc
+            // of sync() says, so nothing is downloaded just to be refused.
+            val upToDate =
+                installed != null &&
+                    if (force) release.versionCode?.let { it <= installed.longVersionCode } == true
+                    else notNewer(release, installed, store.record(app.id))
+            if (upToDate) {
                 keepWork = false
                 store.clearError(app.id)
                 set(app.id, OpState.UpToDate)
@@ -508,7 +535,7 @@ object AppsManager {
                 Outcome.Success -> {
                     Log.i(TAG, "${app.id}: installed ${base.versionName} (${base.versionCode})")
                     store.setFingerprint(app.id, release.fingerprint)
-                    set(app.id, OpState.Done)
+                    set(app.id, if (installed != null) OpState.Updated else OpState.Done)
                     Notifications.cancelProblem(ctx, app)
                 }
                 is Outcome.PendingUser -> {
@@ -518,19 +545,26 @@ object AppsManager {
                     store.setAskedRelease(app.id, release.fingerprint)
                     askUser(ctx, app, outcome.confirm, "${app.packageName}:${base.versionCode}")
                 }
-                is Outcome.Failure -> fail(ctx, app, outcome.message, notify)
+                is Outcome.Failure ->
+                    fail(ctx, app, outcome.message, notify, kind = kindOf(installed))
             }
             return true
         } catch (e: CancellationException) {
             // Stopped from outside (the job's time is up, its network went): nothing that was
             // downloaded is thrown away, the rescheduled job picks it up.
             keepWork = true
-            set(app.id, OpState.Failed("cancelled"))
+            set(app.id, OpState.Interrupted)
             throw e
         } catch (e: CertMismatchException) {
             // Always worth telling: the source served something the catalog didn't pin.
             Log.w(TAG, "${app.id}: ${e.message}")
-            fail(ctx, app, e.message ?: "signature mismatch", notify = true)
+            fail(
+                ctx,
+                app,
+                e.message ?: "signature mismatch",
+                notify = true,
+                kind = kindOf(installed),
+            )
         } catch (e: IOException) {
             Log.w(TAG, "${app.id}: ${e.message}", e)
             fail(
@@ -539,10 +573,11 @@ object AppsManager {
                 e.message ?: e.javaClass.simpleName,
                 notify,
                 patient = automatic && installed != null,
+                kind = kindOf(installed),
             )
         } catch (e: RuntimeException) {
             Log.e(TAG, "${app.id}: install crashed", e)
-            fail(ctx, app, e.message ?: e.javaClass.simpleName, notify)
+            fail(ctx, app, e.message ?: e.javaClass.simpleName, notify, kind = kindOf(installed))
         } finally {
             if (!keepWork) work.deleteRecursively()
         }
@@ -626,9 +661,14 @@ object AppsManager {
     private fun sameVersion(a: String, b: String): Boolean =
         a.removePrefix("v").removePrefix("V") == b.removePrefix("v").removePrefix("V")
 
+    /** IchthysOS: an attempt on an app that isn't installed is an install, else an update. */
+    private fun kindOf(installed: PackageInfo?): FailureKind =
+        if (installed == null) FailureKind.INSTALL else FailureKind.UPDATE
+
     /**
      * @param patient a background update check that could not reach or read its source: see
      *   [FAILED_CHECKS_BEFORE_NOTICE]
+     * @param kind IchthysOS: what failed, for the notification's title
      */
     private fun fail(
         ctx: Context,
@@ -636,12 +676,13 @@ object AppsManager {
         message: String,
         notify: Boolean,
         patient: Boolean = false,
+        kind: FailureKind = FailureKind.INSTALL,
     ) {
         set(app.id, OpState.Failed(message))
         // Failures notify once per distinct error, not on every pass that runs into it again.
         val repeats = AppStore(ctx).setError(app.id, message)
         if (notify && repeats == (if (patient) FAILED_CHECKS_BEFORE_NOTICE else 1)) {
-            Notifications.failure(ctx, app, message)
+            Notifications.failure(ctx, app, message, if (patient) FailureKind.CHECK else kind)
         }
     }
 
@@ -660,7 +701,9 @@ object AppsManager {
                 Log.w(TAG, "${app.id}: cannot start confirmation", e)
             }
         }
-        if (first) Notifications.userAction(ctx, app, confirm)
+        if (first) {
+            Notifications.userAction(ctx, app, confirm, uninstall = what.endsWith(":uninstall"))
+        }
     }
 
     /** A PackageInstaller result nobody waited for (see [Installer]). */
@@ -682,7 +725,24 @@ object AppsManager {
             is Outcome.PendingUser ->
                 // The version isn't known here; a request already made for this app stands.
                 askUser(context, app, outcome.confirm, store.asked(appId) ?: app.packageName)
-            is Outcome.Failure -> fail(context, app, outcome.message, notify = true)
+            is Outcome.Failure ->
+                if (outcome.status == PackageInstaller.STATUS_FAILURE_ABORTED) {
+                    // IchthysOS: the user said no to the system's confirmation. That is their
+                    // answer, not a failure: no "install failed: aborted" notification or red row.
+                    // The release stays recorded as asked about, so background passes don't ask
+                    // again; "Update now" does.
+                    Log.i(TAG, "$appId: declined by the user")
+                    _ops.update { it - appId }
+                    Notifications.cancelProblem(context, app)
+                } else {
+                    val kind =
+                        when {
+                            uninstall -> FailureKind.REMOVE
+                            installedInfo(context, app.packageName) != null -> FailureKind.UPDATE
+                            else -> FailureKind.INSTALL
+                        }
+                    fail(context, app, outcome.message, notify = true, kind = kind)
+                }
         }
     }
 

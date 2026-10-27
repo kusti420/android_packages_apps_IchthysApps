@@ -127,12 +127,34 @@ object Notifications {
         )
     }
 
-    fun failure(ctx: Context, app: CatalogApp, message: String) {
+    /**
+     * IchthysOS: what a failure notification is about, so its title says what went wrong (an
+     * update or a removal used to be titled "install failed").
+     */
+    enum class FailureKind {
+        /** An app that isn't on the phone could not be installed. */
+        INSTALL,
+        /** A newer version could not be installed over the one on the phone. */
+        UPDATE,
+        /** A background update check kept failing; the installed app is fine. */
+        CHECK,
+        /** An app that left apps.install could not be uninstalled. */
+        REMOVE,
+    }
+
+    fun failure(ctx: Context, app: CatalogApp, message: String, kind: FailureKind) {
+        val title =
+            when (kind) {
+                FailureKind.INSTALL -> R.string.notif_failed_title
+                FailureKind.UPDATE -> R.string.notif_update_failed_title
+                FailureKind.CHECK -> R.string.notif_check_failed_title
+                FailureKind.REMOVE -> R.string.notif_remove_failed_title
+            }
         post(
             ctx,
             problemId(app),
             builder(ctx, CHANNEL_PROBLEMS)
-                .setContentTitle(ctx.getString(R.string.notif_failed_title, app.name))
+                .setContentTitle(ctx.getString(title, app.name))
                 .setContentText(message)
                 .setStyle(Notification.BigTextStyle().bigText(message))
                 .setContentIntent(openInstalled(ctx, problemId(app)))
@@ -142,12 +164,20 @@ object Notifications {
 
     /**
      * The ongoing notification of the user-initiated job: the app being worked on ([appName], null
-     * between apps) and how far its download is ([percent], null when that isn't known).
+     * between apps), what is being done to it ([stage], a status string; IchthysOS: so a plain
+     * update check reads "Looking up the latest version", not just the title's "Installing") and
+     * how far its download is ([percent], null when that isn't known).
      */
-    fun progress(ctx: Context, appName: String?, percent: Int?): Notification =
+    fun progress(ctx: Context, appName: String?, percent: Int?, stage: Int? = null): Notification =
         builder(ctx, CHANNEL_PROGRESS)
             .setContentTitle(ctx.getString(R.string.notif_progress_title))
-            .setContentText(appName)
+            .setContentText(
+                if (appName != null && stage != null) {
+                    ctx.getString(R.string.notif_progress_text, appName, ctx.getString(stage))
+                } else {
+                    appName
+                }
+            )
             .setProgress(100, percent ?: 0, percent == null)
             .setOngoing(true)
             .setAutoCancel(false)
@@ -157,8 +187,10 @@ object Notifications {
     /**
      * [confirm] is PackageInstaller's confirmation activity, or null to just open the app. The
      * caller posts this once per package and version (AppStore.setAsked), not on every pass.
+     *
+     * @param uninstall IchthysOS: the confirmation is for removing the app, not installing it
      */
-    fun userAction(ctx: Context, app: CatalogApp, confirm: Intent?) {
+    fun userAction(ctx: Context, app: CatalogApp, confirm: Intent?, uninstall: Boolean = false) {
         val tap =
             if (confirm != null) {
                 PendingIntent.getActivity(
@@ -175,7 +207,12 @@ object Notifications {
             problemId(app),
             builder(ctx, CHANNEL_PROBLEMS)
                 .setContentTitle(ctx.getString(R.string.notif_user_action_title, app.name))
-                .setContentText(ctx.getString(R.string.notif_user_action_text))
+                .setContentText(
+                    ctx.getString(
+                        if (uninstall) R.string.notif_user_action_remove_text
+                        else R.string.notif_user_action_text
+                    )
+                )
                 .setContentIntent(tap)
                 .build(),
         )

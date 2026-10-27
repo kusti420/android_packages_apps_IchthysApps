@@ -40,6 +40,7 @@ import kotlinx.coroutines.flow.conflate
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import org.ichthys.apps.R
 import org.ichthys.apps.config.AppsConfig
 import org.ichthys.apps.notify.Notifications
 import org.ichthys.apps.sync.AppsManager
@@ -138,13 +139,13 @@ class UpdateJob : JobService() {
                         ?.let { (id, op) ->
                             val fraction = (op as? OpState.Downloading)?.fraction
                             val name = names.getOrPut(id) { AppsManager.find(ctx, id)?.name }
-                            name to fraction?.let { (it * 100).toInt() }
+                            Triple(name, fraction?.let { (it * 100).toInt() }, stageOf(op))
                         }
                 }
                 .distinctUntilChanged()
                 .conflate()
                 .collect { current ->
-                    showProgress(params, current?.first, current?.second)
+                    showProgress(params, current?.first, current?.second, current?.third)
                     delay(PROGRESS_INTERVAL_MS)
                 }
         }
@@ -172,12 +173,28 @@ class UpdateJob : JobService() {
         }
     }
 
-    private fun showProgress(params: JobParameters, app: String?, percent: Int?) {
+    /** IchthysOS: the status line for the app being worked on, as its row on screen shows it. */
+    private fun stageOf(op: OpState): Int? =
+        when (op) {
+            OpState.Resolving -> R.string.status_resolving
+            is OpState.Downloading -> R.string.status_downloading
+            OpState.Verifying -> R.string.status_verifying
+            OpState.Installing -> R.string.status_installing
+            OpState.Uninstalling -> R.string.status_uninstalling
+            else -> null
+        }
+
+    private fun showProgress(
+        params: JobParameters,
+        app: String?,
+        percent: Int?,
+        stage: Int? = null,
+    ) {
         try {
             setNotification(
                 params,
                 Notifications.ID_PROGRESS,
-                Notifications.progress(this, app, percent),
+                Notifications.progress(this, app, percent, stage),
                 JobService.JOB_END_NOTIFICATION_POLICY_REMOVE,
             )
         } catch (e: RuntimeException) {

@@ -171,6 +171,9 @@ object Adoption {
             if (sameKey) SourceLookup.Found("fdroid:$packageName") else SourceLookup.OtherSigner
         } catch (e: IOException) {
             SourceLookup.Failed(e.message ?: e.javaClass.simpleName)
+        } catch (e: RuntimeException) {
+            // IchthysOS: an index that isn't the expected shape fails the lookup, not the app.
+            SourceLookup.Failed(e.message ?: e.javaClass.simpleName)
         }
     }
 

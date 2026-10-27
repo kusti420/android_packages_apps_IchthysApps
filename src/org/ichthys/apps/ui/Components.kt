@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -41,7 +42,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import kotlin.math.abs
 import org.ichthys.apps.R
 import org.ichthys.apps.sync.OpState
 import org.ichthys.apps.ui.theme.Shoal
@@ -76,7 +81,8 @@ fun SectionLabel(text: String, modifier: Modifier = Modifier) {
         text.uppercase(),
         style = MaterialTheme.typography.labelSmall.copy(fontFamily = Shoal.tokens.mono),
         color = Shoal.tokens.muted,
-        modifier = modifier.padding(bottom = 8.dp),
+        // IchthysOS: a heading for TalkBack's heading navigation.
+        modifier = modifier.semantics { heading() }.padding(bottom = 8.dp),
     )
 }
 
@@ -118,12 +124,26 @@ fun ToggleRow(
     enabled: Boolean = true,
     onChange: (Boolean) -> Unit,
 ) {
+    // IchthysOS: the whole row toggles (and is one TalkBack node with its label), not only the
+    // switch at its end.
     Row(
-        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        Modifier.fillMaxWidth()
+            .toggleable(
+                value = checked,
+                enabled = enabled,
+                role = Role.Switch,
+                onValueChange = onChange,
+            )
+            .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(label, style = MaterialTheme.typography.bodyLarge)
+        Column(Modifier.weight(1f).padding(end = 12.dp)) {
+            // IchthysOS: a locked row (Follow beta while a beta is installed) looks locked.
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyLarge,
+                color = if (enabled) Shoal.tokens.text else Shoal.tokens.muted,
+            )
             if (supporting != null) {
                 Text(
                     supporting,
@@ -132,7 +152,7 @@ fun ToggleRow(
                 )
             }
         }
-        Switch(checked = checked, onCheckedChange = onChange, enabled = enabled)
+        Switch(checked = checked, onCheckedChange = null, enabled = enabled)
     }
 }
 
@@ -242,6 +262,8 @@ fun OpStatus(op: OpState?) {
             OpState.Installing -> stringResource(R.string.status_installing)
             OpState.Uninstalling -> stringResource(R.string.status_uninstalling)
             OpState.Done -> stringResource(R.string.status_done)
+            OpState.Updated -> stringResource(R.string.status_updated)
+            OpState.Interrupted -> stringResource(R.string.status_interrupted)
             OpState.Removed -> stringResource(R.string.status_removed)
             OpState.UpToDate -> stringResource(R.string.status_up_to_date)
             OpState.WaitingForWifi -> stringResource(R.string.status_waiting_wifi)
@@ -279,13 +301,42 @@ fun OpStatus(op: OpState?) {
     }
 }
 
-/** "3 min ago" for a millis timestamp; [never] for 0. */
-fun relativeTime(millis: Long, never: String): String =
-    if (millis <= 0) never
-    else
-        DateUtils.getRelativeTimeSpanString(
-                millis,
-                System.currentTimeMillis(),
-                DateUtils.MINUTE_IN_MILLIS,
-            )
-            .toString()
+/**
+ * "3 min ago" for a millis timestamp; [never] for 0, [justNow] for under a minute (IchthysOS:
+ * DateUtils says "0 minutes ago" there).
+ */
+fun relativeTime(millis: Long, never: String, justNow: String): String {
+    if (millis <= 0) return never
+    val now = System.currentTimeMillis()
+    if (abs(now - millis) < DateUtils.MINUTE_IN_MILLIS) return justNow
+    return DateUtils.getRelativeTimeSpanString(millis, now, DateUtils.MINUTE_IN_MILLIS).toString()
+}
+
+/** IchthysOS: in place of the app lists until the installed apps have been read once. */
+@Composable
+fun LoadingCard() {
+    val t = Shoal.tokens
+    ShoalCard {
+        Text(
+            stringResource(R.string.apps_loading),
+            style = MaterialTheme.typography.bodyMedium,
+            color = t.muted,
+        )
+        LinearProgressIndicator(
+            modifier = Modifier.fillMaxWidth().padding(top = 8.dp).height(2.dp),
+            color = t.accent,
+            trackColor = t.track,
+        )
+    }
+}
+
+/** IchthysOS: under a screen's title while the phone has no internet connection. */
+@Composable
+fun OfflineNote() {
+    Text(
+        stringResource(R.string.offline_note),
+        style = MaterialTheme.typography.bodySmall,
+        color = Shoal.tokens.text,
+        modifier = Modifier.padding(top = 8.dp),
+    )
+}
