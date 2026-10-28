@@ -21,6 +21,8 @@ import android.util.JsonToken
 import java.io.File
 import java.io.IOException
 import java.security.MessageDigest
+import java.util.jar.JarFile
+import org.json.JSONObject
 
 /**
  * `fdroid:<package>[@<repo-url>]`: an F-Droid repository's index-v2 (f-droid.org/repo by default).
@@ -47,6 +49,28 @@ object FdroidSource : Source {
     /** Where indexes are cached; set by [SourceRegistry.init]. */
     @Volatile var indexDir: File? = null
 
+    /**
+     * IchthysOS: where the repos' signing keys first seen and their newest index timestamps are
+     * kept (not the cache, which can be cleared); set by [SourceRegistry.init].
+     */
+    @Volatile var stateDir: File? = null
+
+    /**
+     * IchthysOS: the signing-certificate SHA-256 of repos whose key is known, as F-Droid
+     * publishes it. Other repos: the "?fingerprint=" of the catalog entry, else the first key seen.
+     */
+    private val PINNED_REPOS =
+        mapOf(DEFAULT_REPO to "43238d512c1e5eb2d6569f4a3afbf5523418b82e0a3ed1552770abb9a9c9ccab")
+
+    /** "https://repo?fingerprint=AB12…" -> the repo's URL and the fingerprint, if any. */
+    private fun splitRepo(repo: String): Pair<String, String?> {
+        val url = repo.substringBefore('?').trimEnd('/')
+        val fp =
+            repo.substringAfter("fingerprint=", "").substringBefore('&').trim().lowercase()
+                .replace(":", "").ifEmpty { null }
+        return url to fp
+    }
+
     private data class Version(
         val name: String?,
         val code: Long,
@@ -65,9 +89,9 @@ object FdroidSource : Source {
 
     override fun resolve(spec: String, device: DeviceSpec): Release {
         val pkg = spec.substringBefore('@').trim()
-        val repo = spec.substringAfter('@', DEFAULT_REPO).trim().trimEnd('/')
+        val (repo, fingerprint) = splitRepo(spec.substringAfter('@', DEFAULT_REPO).trim())
         if (pkg.isEmpty()) throw IOException("fdroid: empty package")
-        val versions = findVersions(index(repo, device.saveData), pkg)
+        val versions = findVersions(index(repo, fingerprint, device.saveData), pkg)
         if (versions.isEmpty()) throw IOException("fdroid: $pkg not in $repo")
         val v = best(versions, device) ?: throw IOException("fdroid: no compatible $pkg build")
         val beta = best(versions, device, betas = true)?.takeIf { it.code > v.code }
@@ -95,7 +119,8 @@ object FdroidSource : Source {
      * null when the repo doesn't have the package (or nothing this phone can run).
      */
     fun lookup(pkg: String, device: DeviceSpec, repo: String = DEFAULT_REPO): Listing? {
-        val v = best(findVersions(index(repo.trimEnd('/'), device.saveData), pkg), device)
+        val (url, fingerprint) = splitRepo(repo)
+        val v = best(findVersions(index(url, fingerprint, device.saveData), pkg), device)
         return v?.let { Listing(it.name, it.signers.toSet()) }
     }
 
@@ -121,7 +146,7 @@ object FdroidSource : Source {
      * The repo's current index-v2, downloaded when entry.json points at a new one. With [saveData]
      * a cached index downloaded within [STALE_OK_MS] is used as it is, without asking.
      */
-    private fun index(repo: String, saveData: Boolean): File {
+    private fun index(repo: String, fingerprint: String?, saveData: Boolean): File {
         val dir = indexDir ?: File(System.getProperty("java.io.tmpdir") ?: "/tmp", "fdroid")
         dir.mkdirs()
         val key = sha256Hex(repo.toByteArray()).take(16)
@@ -132,7 +157,9 @@ object FdroidSource : Source {
             val age = System.currentTimeMillis() - file.lastModified()
             if (age in 0 until STALE_OK_MS) return file
         }
-        val entry = Http.json("$repo/entry.json")
+        // IchthysOS: entry.json from the signed entry.jar, not the bare one: it names the index
+        // and its hash, so a mirror or anyone on the path could otherwise serve any index.
+        val entry = signedEntry(repo, fingerprint, dir, key)
         val idx = entry.optJSONObject("index") ?: throw IOException("fdroid: entry.json no index")
         val name = idx.optString("name", "/index-v2.json")
         val sha = idx.optString("sha256").lowercase().ifEmpty { null }
@@ -147,6 +174,51 @@ object FdroidSource : Source {
             if (sha != null) stamp.writeText(sha) else stamp.delete()
             return file
         }
+    }
+
+    /**
+     * IchthysOS: entry.json out of [repo]'s entry.jar, after checking its JAR signature is the
+     * repo's key ([PINNED_REPOS], the catalog's [fingerprint], or the first key seen, which must
+     * not change) and that it isn't older than an index already seen (a rollback).
+     */
+    private fun signedEntry(repo: String, fingerprint: String?, dir: File, key: String): JSONObject {
+        val jar = File(dir, "$key.entry.jar")
+        jar.delete()
+        Http.downloadBlocking(RemoteFile(url = "$repo/entry.jar", name = jar.name), jar)
+        val (text, signer) =
+            try {
+                JarFile(jar, true).use { jf ->
+                    val e = jf.getJarEntry("entry.json")
+                        ?: throw IOException("fdroid: $repo entry.jar has no entry.json")
+                    // Read to the end: that is when JarFile checks the signature.
+                    val bytes = jf.getInputStream(e).use { it.readBytes() }
+                    val cert = e.certificates?.firstOrNull()
+                        ?: throw IOException("fdroid: $repo entry.json is not signed")
+                    String(bytes, Charsets.UTF_8) to sha256Hex(cert.encoded)
+                }
+            } catch (e: SecurityException) {
+                throw IOException("fdroid: $repo entry.jar signature is broken", e)
+            } finally {
+                jar.delete()
+            }
+        val state = (stateDir ?: dir).apply { mkdirs() }
+        val seenKey = File(state, "$key.signer")
+        val expected = PINNED_REPOS[repo] ?: fingerprint
+            ?: seenKey.takeIf { it.isFile }?.readText()?.trim()
+        if (expected == null) {
+            seenKey.writeText(signer)
+        } else if (expected != signer) {
+            throw IOException("fdroid: $repo index is signed by an unexpected key")
+        }
+        val entry = JSONObject(text)
+        val timestamp = entry.optLong("timestamp", 0L)
+        val seenTime = File(state, "$key.timestamp")
+        val newest = seenTime.takeIf { it.isFile }?.readText()?.trim()?.toLongOrNull() ?: 0L
+        if (timestamp < newest) {
+            throw IOException("fdroid: $repo index is older than one already seen")
+        }
+        if (timestamp > newest) seenTime.writeText(timestamp.toString())
+        return entry
     }
 
     /** Streams index-v2 to packages.<pkg>.versions. */

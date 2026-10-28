@@ -39,6 +39,7 @@ object SourceRegistry {
     /** Gives the sources that cache between runs (F-Droid indexes) their directory. */
     fun init(context: Context) {
         FdroidSource.indexDir = File(context.cacheDir, "fdroid")
+        FdroidSource.stateDir = File(context.filesDir, "fdroid")
     }
 
     operator fun get(scheme: String): Source? = sources[scheme]
