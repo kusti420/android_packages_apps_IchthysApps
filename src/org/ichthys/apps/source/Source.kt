@@ -86,7 +86,9 @@ data class RemoteFile(
     val referer: String? = null,
     val sha256: String? = null,
     val userAgent: String? = null,
-    val httpsOnly: Boolean = false,
+    // IchthysOS: on by default: an APK or index is never fetched in cleartext (signatures pin
+    // the APK, but a cleartext index can be frozen or rolled back by anyone on the path).
+    val httpsOnly: Boolean = true,
     val size: Long? = null,
 )
 

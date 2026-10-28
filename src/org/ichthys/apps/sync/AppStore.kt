@@ -157,6 +157,16 @@ class AppStore(context: Context) {
      */
     fun askedRelease(id: String): String? = prefs.getString("$id.askedRelease", null)
 
+    /**
+     * IchthysOS: the release whose signature check or install failed (its fingerprint, or its
+     * versionCode), so the background pass doesn't download the same failure again.
+     */
+    fun rejectedRelease(id: String): String? = prefs.getString("$id.rejectedRelease", null)
+
+    fun setRejectedRelease(id: String, key: String?) {
+        prefs.edit().putString("$id.rejectedRelease", key).apply()
+    }
+
     fun setAskedRelease(id: String, fingerprint: String?) {
         prefs.edit().putString("$id.askedRelease", fingerprint).apply()
     }

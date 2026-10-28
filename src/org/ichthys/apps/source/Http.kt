@@ -91,7 +91,7 @@ object Http {
         accept: String? = null,
         ua: String? = null,
         headers: Map<String, String> = emptyMap(),
-        httpsOnly: Boolean = false,
+        httpsOnly: Boolean = true,
     ): HttpURLConnection {
         var current = URL(url)
         repeat(MAX_REDIRECTS + 1) {
@@ -141,7 +141,7 @@ object Http {
         url: String,
         referer: String? = null,
         accept: String? = null,
-        httpsOnly: Boolean = false,
+        httpsOnly: Boolean = true,
     ): String {
         val c = open(url, referer, accept, httpsOnly = httpsOnly)
         try {

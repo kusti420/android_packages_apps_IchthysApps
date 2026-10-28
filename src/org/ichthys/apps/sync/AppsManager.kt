@@ -394,6 +394,9 @@ object AppsManager {
     private suspend fun removeDropped(ctx: Context, catalog: Catalog, managed: List<String>) {
         val store = AppStore(ctx)
         val dropped = store.managed - managed.toSet()
+        // IchthysOS: dropped apps still installed after this pass (the uninstall failed or waits
+        // for the user) stay tracked, so the next pass tries again instead of forgetting them.
+        val stillInstalled = mutableSetOf<String>()
         for (id in dropped) {
             val app = catalog[id] ?: continue
             if (installedInfo(ctx, app.packageName) == null) {
@@ -423,16 +426,18 @@ object AppsManager {
                 is Outcome.PendingUser -> {
                     set(id, OpState.NeedsUser)
                     askUser(ctx, app, outcome.confirm, "${app.packageName}:uninstall")
+                    stillInstalled += id
                 }
                 is Outcome.Failure -> {
                     set(id, OpState.Failed(outcome.message))
                     if (store.setError(id, outcome.message) == 1) {
                         Notifications.failure(ctx, app, outcome.message, FailureKind.REMOVE)
                     }
+                    stillInstalled += id
                 }
             }
         }
-        store.managed = managed.toSet()
+        store.managed = managed.toSet() + stillInstalled
     }
 
     /**
@@ -454,6 +459,7 @@ object AppsManager {
         // Whether the work directory outlives this attempt. It does while a download in it can
         // still be continued: until the files are complete, or turn out not to be needed.
         var keepWork = true
+        var releaseKey: String? = null
         try {
             set(app.id, OpState.Resolving)
             val pinned = CertVerifier.installedMatches(ctx, app.packageName, app.certs)
@@ -477,6 +483,7 @@ object AppsManager {
             val found = source.resolve(app.spec, device)
             store.checked(app.id, found)
             val release = choose(found, installed, store.record(app.id))
+            releaseKey = release.fingerprint ?: release.versionCode?.toString()
             // IchthysOS: "Update now" (force) skips only the name and fingerprint guesses; a
             // versionCode the source states that isn't newer still means up to date, as the KDoc
             // of sync() says, so nothing is downloaded just to be refused.
@@ -486,6 +493,7 @@ object AppsManager {
                     else notNewer(release, installed, store.record(app.id))
             if (upToDate) {
                 keepWork = false
+                store.setRejectedRelease(app.id, null)
                 store.clearError(app.id)
                 set(app.id, OpState.UpToDate)
                 return true
@@ -501,10 +509,22 @@ object AppsManager {
                 set(app.id, OpState.NeedsUser)
                 return true
             }
+            // IchthysOS: a release that failed its signature check or its install would fail the
+            // same way again: the background pass doesn't download it each time ("Update now"
+            // still tries).
+            if (automatic && releaseKey != null && releaseKey == store.rejectedRelease(app.id)) {
+                keepWork = false
+                return true
+            }
             if (metered) {
+                // Unknown counts as large: a big download must not go out on mobile data just
+                // because its server doesn't say how big it is.
                 val size = downloadSize(release)
-                if (size > LARGE_DOWNLOAD_BYTES) {
-                    Log.i(TAG, "${app.id}: ${size shr 20} MB, left for an unmetered network")
+                if (size == null || size > LARGE_DOWNLOAD_BYTES) {
+                    Log.i(
+                        TAG,
+                        "${app.id}: ${size?.shr(20) ?: "?"} MB, left for an unmetered network",
+                    )
                     set(app.id, OpState.WaitingForWifi)
                     UpdateJob.scheduleUnmetered(ctx)
                     return false
@@ -538,6 +558,7 @@ object AppsManager {
                 Outcome.Success -> {
                     Log.i(TAG, "${app.id}: installed ${base.versionName} (${base.versionCode})")
                     store.setFingerprint(app.id, release.fingerprint)
+                    store.setRejectedRelease(app.id, null)
                     set(app.id, if (installed != null) OpState.Updated else OpState.Done)
                     Notifications.cancelProblem(ctx, app)
                 }
@@ -548,8 +569,10 @@ object AppsManager {
                     store.setAskedRelease(app.id, release.fingerprint)
                     askUser(ctx, app, outcome.confirm, "${app.packageName}:${base.versionCode}")
                 }
-                is Outcome.Failure ->
+                is Outcome.Failure -> {
+                    store.setRejectedRelease(app.id, releaseKey)
                     fail(ctx, app, outcome.message, notify, kind = kindOf(installed))
+                }
             }
             return true
         } catch (e: CancellationException) {
@@ -561,6 +584,7 @@ object AppsManager {
         } catch (e: CertMismatchException) {
             // Always worth telling: the source served something the catalog didn't pin.
             Log.w(TAG, "${app.id}: ${e.message}")
+            store.setRejectedRelease(app.id, releaseKey)
             fail(
                 ctx,
                 app,
@@ -588,18 +612,24 @@ object AppsManager {
     }
 
     /**
-     * How much [release] downloads, in bytes: what the source said, else what the server says
-     * (0 for a file neither tells about).
+     * How much [release] downloads, in bytes: what the source said, else what the server says;
+     * null when a file's size can't be told (no size, a failed or chunked HEAD).
      */
-    private fun downloadSize(release: Release): Long =
-        release.files.sumOf { f ->
-            f.size
-                ?: try {
-                    Http.head(f.url, f.referer, f.userAgent).contentLength.coerceAtLeast(0L)
-                } catch (e: IOException) {
-                    0L
-                }
+    private fun downloadSize(release: Release): Long? {
+        var total = 0L
+        for (f in release.files) {
+            val size =
+                f.size
+                    ?: try {
+                        Http.head(f.url, f.referer, f.userAgent).contentLength
+                    } catch (e: IOException) {
+                        -1L
+                    }
+            if (size < 0) return null
+            total += size
         }
+        return total
+    }
 
     private fun workDir(ctx: Context, id: String) = File(ctx.cacheDir, "work/$id")
 

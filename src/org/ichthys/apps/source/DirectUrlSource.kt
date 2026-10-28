@@ -28,8 +28,9 @@ object DirectUrlSource : Source {
 
     override fun resolve(spec: String, device: DeviceSpec): Release {
         val url = spec.trim()
-        if (!url.startsWith("https://") && !url.startsWith("http://")) {
-            throw IOException("url: not an http(s) URL")
+        // IchthysOS: https only (Http refuses cleartext); say so instead of a failed download.
+        if (!url.startsWith("https://")) {
+            throw IOException("url: only https:// URLs are fetched")
         }
         val head =
             try {
