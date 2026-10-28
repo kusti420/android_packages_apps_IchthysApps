@@ -37,7 +37,7 @@ private val BOOT_RECHECK_MS = TimeUnit.DAYS.toMillis(1)
 private val receiverScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
 /** Runs [block] off the main thread while keeping the broadcast alive (goAsync). */
-private fun BroadcastReceiver.async(block: suspend () -> Unit) {
+internal fun BroadcastReceiver.async(block: suspend () -> Unit) {
     val pending = goAsync()
     receiverScope.launch {
         try {

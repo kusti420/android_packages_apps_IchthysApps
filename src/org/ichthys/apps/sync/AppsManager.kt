@@ -398,6 +398,9 @@ object AppsManager {
             val app = catalog[id] ?: continue
             if (installedInfo(ctx, app.packageName) == null) {
                 store.forget(id)
+                // IchthysOS: and the half download kept for resuming (up to 600 MB) goes too.
+                workDir(ctx, id).deleteRecursively()
+                Notifications.cancelProblem(ctx, app)
                 continue
             }
             // IchthysOS: a copy with another signer was installed from elsewhere (Termux from

@@ -103,7 +103,9 @@ class UpdateJob : JobService() {
                     Log.w(TAG, "job ${params.jobId} failed", e)
                     finished = true
                 } finally {
-                    running.remove(params.jobId)
+                    // IchthysOS: only this instance's entry. A replaced pass finishing late used
+                    // to remove its replacement's, which a later stop then couldn't cancel.
+                    running.remove(params.jobId, coroutineContext[Job])
                     if (finished) jobFinished(params, false)
                     if (params.jobId == JOB_WATCH) scheduleWatch(ctx)
                 }

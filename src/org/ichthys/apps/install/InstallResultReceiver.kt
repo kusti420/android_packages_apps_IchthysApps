@@ -19,6 +19,7 @@ package org.ichthys.apps.install
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import org.ichthys.apps.notify.async
 import org.ichthys.apps.sync.AppsManager
 
 /**
@@ -32,12 +33,11 @@ class InstallResultReceiver : BroadcastReceiver() {
         val appId = intent.getStringExtra(Installer.EXTRA_APP_ID) ?: return
         val outcome = Installer.outcomeOf(intent)
         if (!Installer.deliver(key, outcome)) {
-            AppsManager.onLateResult(
-                context.applicationContext,
-                appId,
-                uninstall = intent.action == Installer.ACTION_UNINSTALL_STATUS,
-                outcome = outcome,
-            )
+            // IchthysOS: nobody is waiting (the process was restarted): reading the catalog,
+            // the store and the signer is disk and binder work, so it runs off the main thread.
+            val app = context.applicationContext
+            val uninstall = intent.action == Installer.ACTION_UNINSTALL_STATUS
+            async { AppsManager.onLateResult(app, appId, uninstall = uninstall, outcome = outcome) }
         }
     }
 }
