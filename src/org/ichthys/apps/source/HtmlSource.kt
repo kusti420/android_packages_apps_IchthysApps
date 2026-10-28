@@ -66,10 +66,20 @@ object HtmlSource : Source {
             page = next
         }
         val link = firstLink(page, referer, steps.last())
+        // IchthysOS: a fixed link ("…/latest.apk") is the same link for every release: what the
+        // server says about the file tells a new one apart (and its size, for the mobile-data
+        // limit). Without either, the link alone, as before.
+        val head =
+            try {
+                Http.head(link, page)
+            } catch (e: IOException) {
+                null
+            }
+        val stamp = head?.etag?.let { "etag:$it" } ?: head?.lastModified?.let { "lm:$it" }
         return Release(
             versionName = null,
             versionCode = null,
-            fingerprint = link,
+            fingerprint = if (stamp != null) "$link|$stamp" else link,
             files =
                 listOf(
                     RemoteFile(
@@ -77,6 +87,7 @@ object HtmlSource : Source {
                         name = Http.safeName(link),
                         referer = page,
                         httpsOnly = true,
+                        size = head?.contentLength?.takeIf { it >= 0 },
                     )
                 ),
         )
