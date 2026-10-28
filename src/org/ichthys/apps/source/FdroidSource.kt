@@ -108,6 +108,13 @@ object FdroidSource : Source {
         versions
             .filter { (betas || it.stable) && it.minSdk <= device.sdk }
             .filter { it.nativecode.isEmpty() || it.nativecode.any { a -> a in device.abis } }
+            // IchthysOS: the newest build the pinned key signed, not one by another key that
+            // can never be installed (and would be fetched again every pass). An entry that
+            // names no signer stays a candidate; CertVerifier checks what is downloaded.
+            .filter {
+                device.signers.isEmpty() || it.signers.isEmpty() ||
+                    it.signers.any { s -> s in device.signers }
+            }
             .maxByOrNull { it.code }
 
     /**

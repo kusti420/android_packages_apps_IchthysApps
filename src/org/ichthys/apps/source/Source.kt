@@ -105,6 +105,11 @@ data class DeviceSpec(
      * keeps a recent index instead of downloading the day's new one).
      */
     val saveData: Boolean = false,
+    /**
+     * IchthysOS: the signers (certificate SHA-256, hex) an update must have, the app's pins; a
+     * build signed with another key can't update it. Empty: any.
+     */
+    val signers: Set<String> = emptySet(),
 ) {
     companion object {
         fun of(context: Context, saveData: Boolean = false): DeviceSpec {

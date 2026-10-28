@@ -479,7 +479,9 @@ object AppsManager {
             }
             val source = SourceRegistry.forSource(app.source)
             val metered = automatic && Network.isMetered(ctx)
-            val device = DeviceSpec.of(ctx, saveData = metered)
+            val device =
+                DeviceSpec.of(ctx, saveData = metered)
+                    .copy(signers = app.certs.mapTo(HashSet()) { it.lowercase() })
             val found = source.resolve(app.spec, device)
             store.checked(app.id, found)
             val release = choose(found, installed, store.record(app.id))
